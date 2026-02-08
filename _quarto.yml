@@ -3,9 +3,10 @@ project:
   output-dir: docs
 
 website:
-  title: "Funnel Analysis and Conversion Rate"
+  title: "UX Portfolio – Hotel Review Analysis"
 
 format:
   html:
+    self-contained: false
     theme: cosmo
-    toc: true
+    css: styles.css
