@@ -55,15 +55,14 @@ execute:
 </style>
 ---
 
-# E-commerce Funnel Analysis: UX Portfolio
 ## Overview
 
-This analysis examines how users progress through an e-commerce funnel—from landing on the Home page to completing a purchase. The dataset contains records of **one-time users** visiting funnel steps: Home, Search, Payment, and Confirmation.
+This analysis examines how users progress through an e-commerce funnel, from landing on the Home page to completing a purchase. The dataset contains records of **one-time users** visiting funnel steps: Home, Search, Payment, and Confirmation.
 
 Using funnel metrics, step-to-step conversions, and time-based trends, I identified **Mobile Search** as a primary friction point and highlighted targeted UX actions to improve conversions.
 
 ## Analysis Goal
-The goal of this analysis is to identify where users drop off in an e-commerce funnel and determine whether drop-offs differ by device, gender, or time. Insights from this analysis help prioritize UX improvements and testing for the most impactful funnel steps.
+The goal of this analysis is to identify where users drop off in an e-commerce funnel and determine whether drop-offs differ by device, gender, or time. Insights from this analysis can help prioritize UX improvements and testing for the most impactful funnel steps.
 
 ## Dataset Overview
 The data include the following tables:
@@ -76,9 +75,7 @@ The data include the following tables:
 - Users are assumed to move sequentially through the funnel (Home → Search → Payment → Confirmation)
 - Page visits are treated as proxies for intent to progress
 - Drop-offs may reflect UX friction, technical issues, or alternative navigation paths
-- All users are one-time visitors; retention and repeat behavior cannot be evaluated
 
-The tables were merged into a **single dataset tracking each user’s journey through the funnel**, enabling comprehensive funnel analysis.
 ```{r}
 # Load libraries
 library(tidyverse)
@@ -86,6 +83,8 @@ library(lubridate)
 library(ggrepel)
 library(scales)
 library(zoo)
+library(ggplot2)
+library(patchwork)
 
 # Device colors
 device_colors <- c("Desktop" = "#2c7fb8", "Mobile" = "#7fcdbb")
@@ -111,14 +110,7 @@ colnames(df)[5:8] <- c("home","search","payment","confirmation")
 
 # Convert date
 df <- df %>% mutate(date = as.Date(date))
-```
-::: {.callout-note}
-**Data Limitation:** All users are one-time visitors; retention and repeat behavior cannot be evaluated.
-:::
 
-## Reshaping Data
-The data was transformed from a **wide format** (one column per step) into **long format**, allowing step-wise summarization, conversion rate calculation, drop-off analysis, and funnel depth evaluation.
-```{r}
 # Reshape data from wide to long format so each row represents one user at one funnel step
 df_long <- df %>%
   pivot_longer(cols = c(home, search, payment, confirmation),
@@ -127,62 +119,9 @@ df_long <- df %>%
   filter(!is.na(page)) %>%
   mutate(step = factor(step, levels = c("home","search","payment","confirmation")))
 ```
-
-## User Counts Over Time
-User visits were summarized by funnel step, device, and gender to identify potential UX bottlenecks and trends over time.
-```{r fig.width=7, fig.height=4}
-# Summarize number of users per date, device, and funnel step
-df_summary_device <- df_long %>%
-  group_by(date, device, step) %>%
-  summarise(users = n_distinct(user_id), .groups = "drop")
-
-# Plot stacked bar chart of users per date and device, faceted by funnel step
-ggplot(df_summary_device, aes(x = date, y = users, fill = device)) +
-  geom_col(position = "stack") +
-  facet_wrap(~ step) +
-  scale_fill_manual(values = device_colors) +
-  labs(title = "Number of Users per Funnel Step by Device", x = "Date", y = "Users", fill = "Device") +
-  theme_minimal() +
-  theme(plot.title = element_text(size = 20, face = "bold"),
-        axis.title = element_text(size = 16, face = "bold"),
-        axis.text = element_text(size = 11),
-        strip.text = element_text(size = 14, face = "bold"),
-        legend.title = element_text(size = 14, face = "bold"),
-        legend.text = element_text(size = 12))
-```
-<div class="callout callout-figure">
-<strong>Figure Insight</strong><br>
-
-- Mobile users drop off at Search and Payment, suggesting usability issues
-- Funnel behavior is generally balanced between male and female users
-
-</div>
-
-```{r fig.width=7, fig.height=4}
-# Summarize number of users per date, gender, and funnel step
-df_summary_sex <- df_long %>%
-  group_by(date, sex, step) %>%
-  summarise(users = n_distinct(user_id), .groups = "drop")
-
-# Plot stacked bar chart of users per date and gender, faceted by funnel step
-ggplot(df_summary_sex, aes(x = date, y = users, fill = sex)) +
-  geom_col(position = "stack") +
-  facet_wrap(~ step) +
-  scale_fill_manual(values = gender_colors) +
-  labs(title = "Number of Users per Funnel Step by Gender",
-       x = "Date", y = "Users", fill = "Gender") +
-  theme_minimal() +
-  theme(plot.title = element_text(size = 20, face = "bold"),
-        axis.title = element_text(size = 16, face = "bold"),
-        axis.text = element_text(size = 11),
-        strip.text = element_text(size = 14, face = "bold"),
-        legend.title = element_text(size = 14, face = "bold"),
-        legend.text = element_text(size = 12))
-```
-<div class="callout callout-figure">
-<strong>Figure Insight</strong><br>
-Funnel behavior is balanced between male and female users.
-</div>
+::: {.callout-note}
+**Data Limitation:** All users are one-time visitors; retention and repeat behavior cannot be evaluated.
+:::
 
 ## Funnel Conversion Rates
 Conversion rates were calculated relative to the Home page to highlight where users were lost across the funnel.
@@ -204,59 +143,104 @@ ggplot(conversion_summary, aes(x = step, y = conversion_rate)) +
 ```
 <div class="callout callout-figure">
 <strong>Figure Insight</strong><br>
-
-- **Search** accounts for the largest drop-off (~30%)
-- Overall conversion patterns are consistent across devices and genders, though **step-to-step analysis** reveals Mobile-specific friction between Search and Payment
-
+Only half of Home visitors progress to Search, and fewer than 7% reach Payment, highlighting substantial early funnel loss.
 </div>
 
-```{r fig.width=9, fig.height=4}
-library(ggplot2)
-library(patchwork)
-# Calculate conversion rates per funnel step for each device
-segment_summary <- df_long %>%
-  group_by(step, device) %>%
+## Funnel Drop-offs
+A waterfall-style visualization shows step-wise user losses.
+```{r}
+# Calculate total users, drop-offs, and drop-off rates at each funnel step
+funnel_summary <- df_long %>%
+  group_by(step) %>%
   summarise(users = n_distinct(user_id), .groups = "drop") %>%
-  group_by(device) %>%
-  mutate(conversion_rate = users / max(users)) %>%
-  ungroup() %>%
-  mutate(step = factor(step, levels = c("home","search","payment","confirmation")))
+  mutate(step = factor(step, levels = c("home","search","payment","confirmation"))) %>%
+  arrange(step) %>%
+  mutate(next_users = lead(users),
+         drop_off = users - next_users,
+         drop_off_rate = drop_off / users)
 
-# Plot funnel conversion rates by device using side-by-side bars
-device_plot <- ggplot(segment_summary, aes(x = step, y = conversion_rate, fill = device)) +
-  geom_col(position = position_dodge(width = 0.7), width = 0.6) +
-  scale_fill_manual(values = device_colors) +
-  scale_y_continuous(labels = scales::percent_format()) +
-  labs(title = "Funnel Conversion Rates by Device", x = "Step", y = "Conversion Rate", fill = "Device") +
-  theme_minimal(base_size = 14) +
-  theme(legend.position = "bottom",
-        plot.title = element_text(size = 16))
+# Prepare funnel data for waterfall plot, adding positions and drop-off labels
+funnel_plot <- funnel_summary %>%
+  mutate(step_num = as.numeric(step),
+         next_step_num = step_num + 1,
+         # Black text position
+         label_y = users,
+         # Red drop-off label text
+         drop_label = ifelse(!is.na(drop_off), paste0(round(drop_off_rate * 100), "% drop"), NA),
+         # Red drop-off label position (above next bar's black label)
+         drop_label_y = lead(users) + .15 * max(users))
 
-segment_summary <- df_long %>%
-  group_by(step, sex) %>%
-  summarise(users = n_distinct(user_id), .groups = "drop") %>%
-  group_by(sex) %>%
-  mutate(conversion_rate = users / max(users)) %>%
-  ungroup() %>%
-  mutate(step = factor(step, levels = c("home","search","payment","confirmation")))
-
-# Plot funnel conversion rates by gender using side-by-side bars
-sex_plot <- ggplot(segment_summary, aes(x = step, y = conversion_rate, fill = sex)) +
-  geom_col(position = position_dodge(width = 0.7), width = 0.6) +
-  scale_fill_manual(values = gender_colors) +
-  scale_y_continuous(labels = scales::percent_format()) +
-  labs(title = "Funnel Conversion Rates by Gender", x = "Step", y = "Conversion Rate", fill = "Sex") +
-  theme_minimal(base_size = 14) +
-  theme(legend.position = "bottom",
-        plot.title = element_text(size = 16))
-
-device_plot + sex_plot
+# Plot funnel drop-offs as a bar chart with percentage labels
+ggplot(funnel_plot) +
+  geom_col(aes(x = step, y = users), fill = "grey80", width = 0.6) +
+  geom_text(aes(x = step, y = label_y, label = scales::comma(users)), vjust = -0.5, size = 4, color = "black") +
+  geom_text(aes(x = next_step_num, y = drop_label_y, label = drop_label), color = "red", size = 4, na.rm = TRUE) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.12))) +
+  scale_x_discrete(limits = levels(funnel_plot$step)) +
+  labs(title = "User Drop-Off Across the Funnel",
+       subtitle = "Drop-off percentages appear at the step where users fail to continue",
+       x = "Funnel Step", y = "Users") +
+  theme_minimal(base_size = 14)
 ```
 <div class="callout callout-figure">
 <strong>Figure Insight</strong><br>
+Drop-offs increase at each step. Search → Payment accounts for the most significant user loss due to both high abandonment rate and volume.
+</div>
 
-- Relatively equal conversion between devices and sex.
+## Step-to-Step Conversion Rates
+Step-to-step conversion analysis isolates where friction is introduced.
+```{r}
+# Total unique users who reached each funnel step
+step_counts <- df_long %>%
+  group_by(step) %>%
+  summarise(users = n_distinct(user_id), .groups = "drop") %>%
+  mutate(step = factor(step, levels = c("home", "search", "payment", "confirmation"))) %>%
+  arrange(step)
 
+# Step-to-step conversion rates across the full funnel
+step_conversion <- step_counts %>%
+  mutate(next_step = lead(step),
+         next_users = lead(users),
+         step_conversion_rate = next_users / users) %>%
+  filter(!is.na(step_conversion_rate))
+
+# User counts at each funnel step segmented by device
+device_step_counts <- df_long %>%
+  group_by(device, step) %>%
+  summarise(users = n_distinct(user_id), .groups = "drop") %>%
+  mutate(step = factor(step, levels = c("home", "search", "payment", "confirmation"))) %>%
+  arrange(device, step)
+
+# Step-to-step conversion rates calculated separately for each device
+device_step_conversion <- device_step_counts %>%
+  group_by(device) %>%
+  mutate(next_step = lead(step),
+         next_users = lead(users),
+         step_conversion_rate = next_users / users) %>%
+  ungroup() %>%
+  filter(!is.na(step_conversion_rate))
+
+# Wide-format table comparing mobile and desktop conversion rates by step
+device_step_conversion_table <- device_step_conversion %>%
+  select(device, step, step_conversion_rate) %>%
+  pivot_wider(names_from = device, values_from = step_conversion_rate) %>%
+  mutate(mobile_desktop_gap = Mobile - Desktop)
+
+# Visualization of step-to-step conversion rates by device
+ggplot(device_step_conversion, aes(x = step, y = step_conversion_rate, fill = device)) +
+  geom_col(position = position_dodge(width = 0.7), width = 0.6) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  scale_fill_manual(values = device_colors) +
+  labs(title = "Step-to-Step Funnel Conversion by Device",
+       subtitle = "Conversion from each step to the next",
+       x = "Funnel Step",
+       y = "Conversion Rate",
+       fill = "Device") +
+  theme_minimal(base_size = 14)
+```
+<div class="callout callout-figure">
+<strong>Figure Insight</strong><br>
+Mobile users convert more successfully in mid- and late-funnel steps, indicating Desktop introduces more friction.
 </div>
 
 ## Weekly Trends (Smoothed)
@@ -331,114 +315,11 @@ Mobile UX issues (navigation or filters), performance problems, or a recent mobi
 - Conduct mobile usability testing for Search
 - Review mobile performance logs
 - Audit recent mobile releases to identify regressions
-
 :::
 
-## Funnel Drop-offs
-A waterfall-style visualization shows step-wise user losses.
-```{r}
-# Calculate total users, drop-offs, and drop-off rates at each funnel step
-funnel_summary <- df_long %>%
-  group_by(step) %>%
-  summarise(users = n_distinct(user_id), .groups = "drop") %>%
-  mutate(step = factor(step, levels = c("home","search","payment","confirmation"))) %>%
-  arrange(step) %>%
-  mutate(next_users = lead(users),
-         drop_off = users - next_users,
-         drop_off_rate = drop_off / users)
-
-# Prepare funnel data for waterfall plot, adding positions and drop-off labels
-funnel_plot <- funnel_summary %>%
-  mutate(step_num = as.numeric(step),
-         next_step_num = step_num + 1,
-         # Black text position
-         label_y = users,
-         # Red drop-off label text
-         drop_label = ifelse(!is.na(drop_off), paste0(round(drop_off_rate * 100), "% drop"), NA),
-         # Red drop-off label position (above next bar's black label)
-         drop_label_y = lead(users) + .15 * max(users))
-
-# Plot funnel drop-offs as a bar chart with percentage labels
-ggplot(funnel_plot) +
-  geom_col(aes(x = step, y = users), fill = "grey80", width = 0.6) +
-  geom_text(aes(x = step, y = label_y, label = scales::comma(users)), vjust = -0.5, size = 4, color = "black") +
-  geom_text(aes(x = next_step_num, y = drop_label_y, label = drop_label), color = "red", size = 4, na.rm = TRUE) +
-  scale_y_continuous(expand = expansion(mult = c(0, 0.12))) +
-  scale_x_discrete(limits = levels(funnel_plot$step)) +
-  labs(title = "User Drop-Off Across the Funnel",
-       subtitle = "Drop-off percentages appear at the step where users fail to continue",
-       x = "Funnel Step", y = "Users") +
-  theme_minimal(base_size = 14)
-```
-<div class="callout callout-figure">
-<strong>Figure Insight</strong><br>
-
-- The largest drop-off occurs **Home → Search**, confirming this as the highest-impact area for UX improvement
-
-</div>
-
-## Step-to-Step Conversion Rates
-Step-to-step conversion analysis isolates where friction is introduced.
-```{r}
-# Total unique users who reached each funnel step
-step_counts <- df_long %>%
-  group_by(step) %>%
-  summarise(users = n_distinct(user_id), .groups = "drop") %>%
-  mutate(step = factor(step, levels = c("home", "search", "payment", "confirmation"))) %>%
-  arrange(step)
-
-# Step-to-step conversion rates across the full funnel
-step_conversion <- step_counts %>%
-  mutate(next_step = lead(step),
-         next_users = lead(users),
-         step_conversion_rate = next_users / users) %>%
-  filter(!is.na(step_conversion_rate))
-
-# User counts at each funnel step segmented by device
-device_step_counts <- df_long %>%
-  group_by(device, step) %>%
-  summarise(users = n_distinct(user_id), .groups = "drop") %>%
-  mutate(step = factor(step, levels = c("home", "search", "payment", "confirmation"))) %>%
-  arrange(device, step)
-
-# Step-to-step conversion rates calculated separately for each device
-device_step_conversion <- device_step_counts %>%
-  group_by(device) %>%
-  mutate(next_step = lead(step),
-         next_users = lead(users),
-         step_conversion_rate = next_users / users) %>%
-  ungroup() %>%
-  filter(!is.na(step_conversion_rate))
-
-# Wide-format table comparing mobile and desktop conversion rates by step
-device_step_conversion %>%
-  select(device, step, step_conversion_rate) %>%
-  pivot_wider(names_from = device, values_from = step_conversion_rate) %>%
-  mutate(mobile_desktop_gap = Mobile - Desktop)
-
-# Visualization of step-to-step conversion rates by device
-ggplot(device_step_conversion, aes(x = step, y = step_conversion_rate, fill = device)) +
-  geom_col(position = position_dodge(width = 0.7), width = 0.6) +
-  scale_y_continuous(labels = scales::percent_format()) +
-  scale_fill_manual(values = device_colors) +
-  labs(title = "Step-to-Step Funnel Conversion by Device",
-       subtitle = "Conversion from each step to the next",
-       x = "Funnel Step",
-       y = "Conversion Rate",
-       fill = "Device") +
-  theme_minimal(base_size = 14)
-```
-<div class="callout callout-figure">
-<strong>Figure Insight</strong><br>
-
-- **Search → Payment** is the most critical friction point, particularly for mobile users
-- Device-specific differences quantify where UX improvements could recover the most conversions
-
-</div>
-
-## Drop-off Contribution by Funnel Step
+## Drop-off Contribution Analysis
 This analysis quantifies **how much each step contributes to total user loss.**
-```{r}
+```{r fig.width=9, fig.height=4}
 # Total unique users who reached each funnel step
 step_counts <- df_long %>%
   group_by(step) %>%
@@ -458,27 +339,16 @@ dropoff_contribution <- dropoff_summary %>%
          contribution_pct = drop_off / total_lost)
 
 # Visualization of each step’s contribution to total user loss
-ggplot(dropoff_contribution, aes(x = step, y = contribution_pct)) +
+funnel_step_drop <- ggplot(dropoff_contribution, aes(x = step, y = contribution_pct)) +
   geom_col(fill = "#2c7fb8", width = 0.6) +
   geom_text(aes(label = scales::percent(contribution_pct, accuracy = 1)), vjust = -0.5, size = 5) +
   scale_y_continuous(labels = scales::percent_format(), expand = expansion(mult = c(0, 0.1))) +
-  labs(title = "Contribution of Each Funnel Step to Total User Loss",
-       subtitle = "Percentage of all lost users attributable to each step",
+  labs(title = "Overall Drop-off Contribution",
+       #subtitle = "Percentage of all lost users attributable to each step",
        x = "Funnel Step",
        y = "Share of Total Drop-off") +
   theme_minimal(base_size = 14)
-```
-<div class="callout callout-figure">
-<strong>Figure Insight</strong><br>
 
-- The Search transition accounts for the largest share of total lost users
-- Payment also contributes meaningfully, suggesting secondary optimization opportunities
-
-</div>
-
-## Drop-off Contribution by Device
-Segmenting drop-offs by device highlights where losses are disproportionately impacting Mobile or Desktop users.
-```{r}
 # User counts at each funnel step segmented by device
 device_step_counts <- df_long %>%
   group_by(device, step) %>%
@@ -497,23 +367,146 @@ device_dropoff <- device_step_counts %>%
   ungroup()
 
 # Visualization of drop-off contribution by funnel step and device
-ggplot(device_dropoff, aes(x = step, y = contribution_pct, fill = device)) +
+device_drop <- ggplot(device_dropoff, aes(x = step, y = contribution_pct, fill = device)) +
   geom_col(position = position_dodge(width = 0.7), width = 0.6) +
   scale_y_continuous(labels = scales::percent_format()) +
   scale_fill_manual(values = device_colors) +
-  labs(title = "Drop-off Contribution by Funnel Step and Device",
-       subtitle = "Share of total lost users within each device group",
+  labs(title = "Drop-off Contribution by Device",
+       #subtitle = "Share of total lost users within each device group",
        x = "Funnel Step",
        y = "Share of Total Drop-off",
        fill = "Device") +
   theme_minimal(base_size = 14)
+
+(funnel_step_drop | device_drop) +
+  plot_annotation(
+    title = "Which Funnel Steps Contribute Most to User Loss?",
+    subtitle = "Overall contribution compared with device-specific patterns",
+    theme = theme(
+      plot.title = element_text(size = 18, face = "bold"),
+      plot.subtitle = element_text(size = 13)
+    )
+  )
 ```
 <div class="callout callout-figure">
 <strong>Figure Insight</strong><br>
+Half of total drop-off occurs before users leave Home → Search, and 44% at Search → Payment, making Search the key lever for improving conversions.
+</div>
 
-- Mobile users experience larger losses, especially during **Search → Payment**
-- Desktop losses are more evenly distributed across steps
+## Key UX Insights & Recommendations
+**Findings:**
 
+1. Largest step-wise drop-offs occur at **Search → Payment** (87%) and **Payment → Confirmation** (93%), signaling high friction in the later funnel stages.
+2. **Mobile users outperform Desktop** in the later funnel steps, suggesting that Desktop experiences more friction during Search → Payment → Confirmation.
+3. Conversion rates are **consistent across gender**, indicating minimal differences between male and female users.
+4. The March decline disproportionately affected **Mobile Search**, pointing to a possible mobile-specific regression.
+
+**Recommendations:**
+
+1. Prioritize Mobile Search redesign and testing
+2. Investigate March dip to prevent future regressions
+3. Conduct usability testing, performance audits, and A/B testing on high-leverage steps
+
+> Addressing these areas offers the strongest opportunity to recover lost conversions and improve overall funnel performance.
+
+# Appendix
+## User Counts Over Time
+User visits were summarized by funnel step, device, and gender to identify potential UX bottlenecks and trends over time.
+```{r fig.width=7, fig.height=4}
+# Summarize number of users per date, device, and funnel step
+df_summary_device <- df_long %>%
+  group_by(date, device, step) %>%
+  summarise(users = n_distinct(user_id), .groups = "drop")
+
+# Plot stacked bar chart of users per date and device, faceted by funnel step
+ggplot(df_summary_device, aes(x = date, y = users, fill = device)) +
+  geom_col(position = "stack") +
+  facet_wrap(~ step) +
+  scale_fill_manual(values = device_colors) +
+  labs(title = "Number of Users per Funnel Step by Device", x = "Date", y = "Users", fill = "Device") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 20, face = "bold"),
+        axis.title = element_text(size = 16, face = "bold"),
+        axis.text = element_text(size = 11),
+        strip.text = element_text(size = 14, face = "bold"),
+        legend.title = element_text(size = 14, face = "bold"),
+        legend.text = element_text(size = 12))
+```
+<div class="callout callout-figure">
+<strong>Figure Insight</strong><br>
+Mobile users drop off at Search and Payment, suggesting usability issues
+</div>
+
+```{r fig.width=7, fig.height=4}
+# Summarize number of users per date, gender, and funnel step
+df_summary_sex <- df_long %>%
+  group_by(date, sex, step) %>%
+  summarise(users = n_distinct(user_id), .groups = "drop")
+
+# Plot stacked bar chart of users per date and gender, faceted by funnel step
+ggplot(df_summary_sex, aes(x = date, y = users, fill = sex)) +
+  geom_col(position = "stack") +
+  facet_wrap(~ step) +
+  scale_fill_manual(values = gender_colors) +
+  labs(title = "Number of Users per Funnel Step by Gender",
+       x = "Date", y = "Users", fill = "Gender") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 20, face = "bold"),
+        axis.title = element_text(size = 16, face = "bold"),
+        axis.text = element_text(size = 11),
+        strip.text = element_text(size = 14, face = "bold"),
+        legend.title = element_text(size = 14, face = "bold"),
+        legend.text = element_text(size = 12))
+```
+<div class="callout callout-figure">
+<strong>Figure Insight</strong><br>
+Funnel behavior is balanced between male and female users.
+</div>
+
+```{r fig.width=9, fig.height=4}
+
+# Calculate conversion rates per funnel step for each device
+segment_summary <- df_long %>%
+  group_by(step, device) %>%
+  summarise(users = n_distinct(user_id), .groups = "drop") %>%
+  group_by(device) %>%
+  mutate(conversion_rate = users / max(users)) %>%
+  ungroup() %>%
+  mutate(step = factor(step, levels = c("home","search","payment","confirmation")))
+
+# Plot funnel conversion rates by device using side-by-side bars
+device_plot <- ggplot(segment_summary, aes(x = step, y = conversion_rate, fill = device)) +
+  geom_col(position = position_dodge(width = 0.7), width = 0.6) +
+  scale_fill_manual(values = device_colors) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(title = "Funnel Conversion Rates by Device", x = "Step", y = "Conversion Rate", fill = "Device") +
+  theme_minimal(base_size = 14) +
+  theme(legend.position = "bottom",
+        plot.title = element_text(size = 16))
+
+segment_summary <- df_long %>%
+  group_by(step, sex) %>%
+  summarise(users = n_distinct(user_id), .groups = "drop") %>%
+  group_by(sex) %>%
+  mutate(conversion_rate = users / max(users)) %>%
+  ungroup() %>%
+  mutate(step = factor(step, levels = c("home","search","payment","confirmation")))
+
+# Plot funnel conversion rates by gender using side-by-side bars
+sex_plot <- ggplot(segment_summary, aes(x = step, y = conversion_rate, fill = sex)) +
+  geom_col(position = position_dodge(width = 0.7), width = 0.6) +
+  scale_fill_manual(values = gender_colors) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(title = "Funnel Conversion Rates by Gender", x = "Step", y = "Conversion Rate", fill = "Sex") +
+  theme_minimal(base_size = 14) +
+  theme(legend.position = "bottom",
+        plot.title = element_text(size = 16))
+
+device_plot + sex_plot
+```
+<div class="callout callout-figure">
+<strong>Figure Insight</strong><br>
+Funnel conversion rates are largely consistent across gender, while Mobile users convert more strongly than Desktop users in the later funnel stages, particularly at Payment and Confirmation.
 </div>
 
 ## Funnel Depth Distribution
@@ -548,24 +541,5 @@ ggplot(funnel_depth_summary, aes(x = steps_reached, y = users, fill = device)) +
 ```
 <div class="callout callout-figure">
 <strong>Figure Insight</strong><br>
-
-- Most users reach only 2–3 steps
-- Mobile users are more likely to drop off early, emphasizing the importance of early-funnel improvements
-
+Most users exit the funnel early, with the majority reaching only one or two steps. Mobile users are more likely to drop off at earlier stages, while Desktop users are slightly more likely to reach the deepest funnel stages.
 </div>
-
-## Key UX Insights & Recommendations
-**Findings:**
-
-- Largest drop-offs: Search (~30%) and Payment (~10%)
-- Mobile users drop off more heavily than Desktop, particularly at Search and Payment
-- Gender differences are minimal
-- March decline primarily affected Mobile Search
-
-**Recommendations:**
-
-1. Prioritize Mobile Search redesign and testing
-2. Investigate March dip to prevent future regressions
-3. Conduct usability testing, performance audits, and A/B testing on high-leverage steps
-
-> Addressing these areas offers the strongest opportunity to recover lost conversions and improve overall funnel performance.
